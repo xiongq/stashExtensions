@@ -1,49 +1,103 @@
-name: YouTube 全净化版 (无底栏 Shorts)
-desc: 去除 YouTube 广告、隐藏底部 Shorts 标签页与上传按钮、隐藏首页 Shorts、支持后台播放与画中画及中文字幕翻译
-icon: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.png
+name: YouTube 终极混合版
+desc: 结合 devchristian1337 (2026最新去广告/小窗/后台/字幕) 与 Maasea (彻底隐藏底栏与首页 Shorts)
+icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
 
 rules:
-  # 拦截 UDP 443 (QUIC)，强制回退 TCP 以确保 MITM 解密和脚本生效
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
+  # 拦截 QUIC / UDP 443，强制回退至 TCP 以确保 MITM 解密和脚本生效
   - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
   - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
 
 http:
   mitm:
-    - "*.googlevideo.com"
     - "youtubei.googleapis.com"
     - "youtubei-att.googleapis.com"
+    - "youtube.com"
     - "www.youtube.com"
-    - "s.youtube.com"
+    - "m.youtube.com"
+    - "music.youtube.com"
+    - "*.googlevideo.com"
 
   url-rewrite:
-    # 拦截广告统计与初始化请求
-    - ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad - reject-200
-    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
-    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
-    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject-200
+    # 拦截 initplayback 首包广告请求
+    - ^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ - reject-200
 
   header-rewrite:
-    # 阻止客户端尝试切换回 QUIC
+    # 移除 Alt-Svc 响应头，减少客户端重试 QUIC
     - ^https:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
 
   script:
-    # 核心响应处理：包含 guide 接口（控制底部导航栏 Shorts 与上传按钮）及 browse/player 等接口
-    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?(.*))?$
-      name: YouTube_Enhance_Response
+    # 1. 字幕翻译请求处理（由 devchristian1337 处理，解决字幕加载失败）
+    - match: ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$
+      name: YouTube_Request
+      type: request
+      require-body: false
+      timeout: 10
+      argument: '[true,"zh-CN"]'
+
+    # 2. 客户端配置请求处理
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$
+      name: YouTube_Request
+      type: request
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '[false,"info","32","original"]'
+
+    # 3. 播放请求与广告中断过滤（配合恢复小窗与去广告）
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch)(?:\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$
+      name: YouTube_Request
+      type: request
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '[false,"info","32","original"]'
+
+    # 4. Onesie 配置缓存响应处理
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$
+      name: YouTube_Response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '[false,"info","32"]'
+
+    # 5. 首页信息流广告、搜索结果与首页 Shorts 过滤
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$
+      name: YouTube_Response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '[false,"info","32",true,"",""]'
+
+    # 6. 播放器响应处理、开启后台播放与小窗（画中画）
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$
+      name: YouTube_Response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '[false,"info","32",true,false]'
+
+    # 7. 专门处理底部导航栏与设置页：隐藏底部 Shorts 按钮、上传按钮，并解锁设置页中的画中画开关
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(guide|account\/get_setting)(\?(.*))?$
+      name: YouTube_Guide_Clean
       type: response
       require-body: true
       binary-mode: true
       max-size: -1
       timeout: 15
-      # 参数说明：
-      # blockShorts: true -> 隐藏底部 Shorts 按钮及信息流 Shorts
-      # blockUpload: true -> 隐藏底部中间的 "+" 上传按钮
-      # blockImmersive: true -> 屏蔽选段/沉浸式按钮
-      # captionLang: "zh-Hans" -> 字幕自动翻译为简体中文（不需要可改为 "off"）
-      argument: '{"lyricLang":"zh-Hans","captionLang":"zh-Hans","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
 
 script-providers:
-  YouTube_Enhance_Response:
+  YouTube_Request:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+    interval: 86400
+  YouTube_Response:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
+    interval: 86400
+  YouTube_Guide_Clean:
     url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
     interval: 86400
