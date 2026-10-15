@@ -1,0 +1,49 @@
+name: YouTube 全净化版 (无底栏 Shorts)
+desc: 去除 YouTube 广告、隐藏底部 Shorts 标签页与上传按钮、隐藏首页 Shorts、支持后台播放与画中画及中文字幕翻译
+icon: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.png
+
+rules:
+  # 拦截 UDP 443 (QUIC)，强制回退 TCP 以确保 MITM 解密和脚本生效
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
+  - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
+  - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
+
+http:
+  mitm:
+    - "*.googlevideo.com"
+    - "youtubei.googleapis.com"
+    - "youtubei-att.googleapis.com"
+    - "www.youtube.com"
+    - "s.youtube.com"
+
+  url-rewrite:
+    # 拦截广告统计与初始化请求
+    - ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&oad - reject-200
+    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
+    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
+    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject-200
+
+  header-rewrite:
+    # 阻止客户端尝试切换回 QUIC
+    - ^https:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
+
+  script:
+    # 核心响应处理：包含 guide 接口（控制底部导航栏 Shorts 与上传按钮）及 browse/player 等接口
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?(.*))?$
+      name: YouTube_Enhance_Response
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: -1
+      timeout: 15
+      # 参数说明：
+      # blockShorts: true -> 隐藏底部 Shorts 按钮及信息流 Shorts
+      # blockUpload: true -> 隐藏底部中间的 "+" 上传按钮
+      # blockImmersive: true -> 屏蔽选段/沉浸式按钮
+      # captionLang: "zh-Hans" -> 字幕自动翻译为简体中文（不需要可改为 "off"）
+      argument: '{"lyricLang":"zh-Hans","captionLang":"zh-Hans","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+
+script-providers:
+  YouTube_Enhance_Response:
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
+    interval: 86400
