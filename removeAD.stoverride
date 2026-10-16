@@ -1,9 +1,9 @@
-name: YouTube Stash 专享完整版
-desc: 完整包含 Request 与 Response 双引擎脚本，解决 Stash 下画中画灰屏与漏广告问题
+name: YouTube Enhance (官方最新单脚本架构)
+desc: 去广告、全视频画中画与后台播放、隐藏底栏与首页 Shorts
 icon: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.png
 
 rules:
-  # 拦截 QUIC，强制走 HTTPS
+  # 拦截 QUIC (UDP 443)，强制回退 HTTPS
   - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
   - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
   - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
@@ -17,42 +17,37 @@ http:
     - "s.youtube.com"
 
   url-rewrite:
-    # 关键：在 Stash 中必须使用 reject（直接断开连接）而非 reject-200（返回空内容）
-    # 只有直接断开连接，YouTube 才会认为 CDN 节点故障并立刻回退到标准 /player 接口！
-    - ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback - reject
-    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject
-    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject
-    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject
+    # 仅拦截带 &oad 标记的广告初始化流及广告统计，不阻断正常视频加载
+    - ^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads|videoplayback\?).+&oad - reject-200
+    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
+    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
+    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject-200
 
   header-rewrite:
     - ^https?:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
 
   script:
-    # 1. 核心：之前缺失的 Request 脚本（修改客户端请求头与 Protobuf 请求体，彻底解决部分视频画中画灰屏）
-    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|reel\/reel_watch_sequence)(\?(.*))?$
-      name: YouTube_Enhance_Request
-      type: request
-      require-body: true
-      binary-mode: true
-      max-size: -1
-      timeout: 15
-      argument: '{"debug":false}'
-
-    # 2. 核心：Response 脚本（去首页广告、去贴片广告、开启后台与画中画、隐藏首页与底栏 Shorts）
-    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(\?(.*))?$
+    # 1. 核心：处理主接口（包含 log_event 与 config 以清除加密预加载，包含 guide 以隐藏底栏 Shorts）
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?(.*))?$
       name: YouTube_Enhance_Response
       type: response
       require-body: true
       binary-mode: true
       max-size: -1
       timeout: 15
-      # captionLang 设为 off，避免接管字幕导致字幕加载失败，使用 YouTube 原生字幕
+      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+
+    # 2. 关键新增：接管 googlevideo 的 initplayback 响应，解决部分视频画中画灰屏与漏广告
+    - match: ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*
+      name: YouTube_Enhance_Response
+      type: response
+      require-body: true
+      binary-mode: true
+      max-size: -1
+      timeout: 15
       argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
 
 script-providers:
-  YouTube_Enhance_Request:
-    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.request.preview.js
-    interval: 86400
   YouTube_Enhance_Response:
-    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.response.preview.js
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
     interval: 86400
