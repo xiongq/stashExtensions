@@ -1,4 +1,4 @@
-name: YouTube 终极混合版
+name: YouTube v1.0
 desc: 结合 devchristian1337 (2026最新去广告/小窗/后台/字幕) 与 Maasea (彻底隐藏底栏与首页 Shorts)
 icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
 
@@ -43,7 +43,7 @@ http:
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: '[false,"info","32","original"]'
+      argument: '[false,"info","32","US"]'
 
     # 3. 播放请求与广告中断过滤（配合恢复小窗与去广告）
     - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch)(?:\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$
@@ -52,7 +52,7 @@ http:
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: '[false,"info","32","original"]'
+      argument: '[false,"info","32","US"]'
 
     # 4. Onesie 配置缓存响应处理
     - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$
