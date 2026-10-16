@@ -1,54 +1,145 @@
-name: YouTube (画中画终极修复版)
-desc: 修复 Stash 下 max-size 导致二进制脚本失效及 initplayback 请求阶段拦截问题
-icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
+name: "YouTube"
+desc: "Removes ads from the YouTube app, enables background playback and translates existing subtitle tracks (zh-CN or en-US; videos without subtitles cannot be translated). Requires MITM with a trusted certificate."
+openUrl: "https://loon-plugins.vercel.app"
+author: "devchristian1337"
+homepage: "https://github.com/devchristian1337/loon-plugins/blob/main/README.md"
+icon: "https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png"
+category: "YouTube"
+
+# ---------------------------------------------------------------
+# 参数 (Loon [Argument] -> Stash args)
+# Stash 的 args 只能写默认值,请在 Stash 的覆写参数界面中修改:
+#   background_playback   : true / false  后台播放
+#   playback_region       : original / CN / HK / TW / US / JP / KR / SG / GB / DE / RU
+#   translation_enabled   : true / false  字幕翻译
+#   translation_target    : zh-CN / en-US
+#   hide_home_shorts      : true / false  隐藏首页 Shorts
+#   blocked_channels      : 以空格分隔的频道 ID / @handle / 频道名
+#   blocked_channels_url  : 远程屏蔽列表(HTTPS 纯文本直链)
+#   log_enabled / log_level / capture_budget : 日志相关(见文末说明)
+# ---------------------------------------------------------------
+args:
+  background_playback: false
+  playback_region: original
+  translation_enabled: false
+  translation_target: zh-CN
+  hide_home_shorts: false
+  blocked_channels: ""
+  blocked_channels_url: ""
+  log_enabled: false
+  log_level: info
+  capture_budget: 32
 
 rules:
-  # 强制阻断 UDP 443 (QUIC)，确保 100% 走 HTTPS 触发脚本
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
-  - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
-  - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
-  - AND,((DOMAIN-SUFFIX,youtube.com),(PROTOCOL,UDP)),REJECT
+  # 强制 API / 播放协商从 QUIC 回退到 TCP,以便 MITM / 脚本可检查。不拒绝媒体正文。
+  - AND,((DOMAIN,youtubei.googleapis.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
+  - AND,((DOMAIN,youtubei-att.googleapis.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
+  # googlevideo 域名及子域的 UDP/443(QUIC)回退到 TCP
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
 
 http:
   mitm:
-    - "*.googlevideo.com"
     - "youtubei.googleapis.com"
     - "youtubei-att.googleapis.com"
     - "youtube.com"
     - "www.youtube.com"
     - "m.youtube.com"
-    - "s.youtube.com"
+    - "music.youtube.com"
+    - "*.googlevideo.com"
 
   url-rewrite:
-    # 拦截广告请求与 initplayback 预加载
-    - ^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads|videoplayback\?).+&oad - reject-200
-    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
-    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
-    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject-200
+    # Loon: initplayback POST(仅 iOS YouTube UA)返回内置空白视频 reject_video(200)
+    # Stash 无 reject-video 且不支持 method/UA 条件,这里近似为 reject-200。
+    # initplayback 本身只有 POST,但请在真机验证播放回退是否正常;若异常请删除此条。
+    - >-
+      ^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ - reject-200
 
   header-rewrite:
-    - ^https?:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
+    # 清除媒体源的 Alt-Svc,减少拒绝 QUIC 后的重试(仅响应头)
+    - >-
+      ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-del Alt-Svc
 
   script:
-    # 1. 关键修复：initplayback 必须是 type: request（请求阶段拦截），逼迫客户端走 /player 接口解锁画中画
-    - match: ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*
-      name: YouTube_Enhance_Response
+    # 字幕目标语言
+    - match: ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$
+      name: yt-timedtext
+      type: request
+      require-body: false
+      timeout: 10
+      argument: "[{{{translation_enabled}}},{{{translation_target}}}]"
+
+    # config / log_event 请求处理
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$
+      name: yt-config-request
       type: request
       require-body: true
       binary-mode: true
-      timeout: 15
-      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+      timeout: 10
+      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{playback_region}}}]"
 
-    # 2. 核心修复：移除导致脚本跳过的 max-size: -1，完整修改 player 与 setting 响应包，解锁画中画
-    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?(.*))?$
-      name: YouTube_Enhance_Response
+    # 播放请求与广告配置处理
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|player\/ad_break)(?:\?[^#]*)?$
+      name: yt-player-request
+      type: request
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{playback_region}}}]"
+
+    # Onesie 配置缓存
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$
+      name: yt-config-response
       type: response
       require-body: true
       binary-mode: true
-      timeout: 20
-      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+      timeout: 10
+      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}}]"
+
+    # 信息流广告 / 首页 Shorts / 频道屏蔽
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search)(?:\?[^#]*)?$
+      name: yt-feed-response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{hide_home_shorts}}},{{{blocked_channels}}},{{{blocked_channels_url}}}]"
+
+    # 播放响应 / 后台播放
+    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|reel\/reel_watch_sequence)(?:\?[^#]*)?$
+      name: yt-player-response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{background_playback}}},false]"
+
+# 定时刷新屏蔽频道缓存(每小时)
+cron:
+  script:
+    - match: "0 * * * *"
+      name: yt-blocked-channels-cron
+      timeout: 10
+      argument: "[{{{blocked_channels_url}}}]"
 
 script-providers:
-  YouTube_Enhance_Response:
-    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
+  yt-timedtext:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+    interval: 86400
+  yt-config-request:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+    interval: 86400
+  yt-player-request:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+    interval: 86400
+  yt-blocked-channels-cron:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+    interval: 86400
+  yt-config-response:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
+    interval: 86400
+  yt-feed-response:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
+    interval: 86400
+  yt-player-response:
+    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
     interval: 86400
