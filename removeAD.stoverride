@@ -1,145 +1,239 @@
-name: "YouTube"
-desc: "Removes ads from the YouTube app, enables background playback and translates existing subtitle tracks (zh-CN or en-US; videos without subtitles cannot be translated). Requires MITM with a trusted certificate."
-openUrl: "https://loon-plugins.vercel.app"
-author: "devchristian1337"
-homepage: "https://github.com/devchristian1337/loon-plugins/blob/main/README.md"
-icon: "https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png"
-category: "YouTube"
-
-# ---------------------------------------------------------------
-# 参数 (Loon [Argument] -> Stash args)
-# Stash 的 args 只能写默认值,请在 Stash 的覆写参数界面中修改:
-#   background_playback   : true / false  后台播放
-#   playback_region       : original / CN / HK / TW / US / JP / KR / SG / GB / DE / RU
-#   translation_enabled   : true / false  字幕翻译
-#   translation_target    : zh-CN / en-US
-#   hide_home_shorts      : true / false  隐藏首页 Shorts
-#   blocked_channels      : 以空格分隔的频道 ID / @handle / 频道名
-#   blocked_channels_url  : 远程屏蔽列表(HTTPS 纯文本直链)
-#   log_enabled / log_level / capture_budget : 日志相关(见文末说明)
-# ---------------------------------------------------------------
-args:
-  background_playback: false
-  playback_region: original
-  translation_enabled: false
-  translation_target: zh-CN
-  hide_home_shorts: false
-  blocked_channels: ""
-  blocked_channels_url: ""
-  log_enabled: false
-  log_level: info
-  capture_budget: 32
+name: YouTube
+desc: YouTube request/response scripts migrated from the Loon plugin. Requires trusted MitM certificate.
+author: devchristian1337 (Stash override conversion)
+homepage: https://github.com/devchristian1337/loon-plugins/blob/main/README.md
+icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
+category: YouTube
+version: 1.0.0
+arguments-version: 1
+arguments:
+  background_playback:
+    type: switch
+    title: Background playback
+    description: Requests background playback for regular videos. Live streams/restricted content remain controlled by YouTube.
+    default: false
+  playback_region:
+    type: select
+    title: Playback request region
+    description: Changes the YouTube client gl parameter only; it does not change the exit IP.
+    default: original
+    options:
+      - value: original
+      - value: CN
+      - value: HK
+      - value: TW
+      - value: US
+      - value: JP
+      - value: KR
+      - value: SG
+      - value: GB
+      - value: DE
+      - value: RU
+  translation_enabled:
+    type: switch
+    title: Subtitle translation
+    description: Translates existing subtitle tracks only. Videos without subtitles cannot be translated.
+    default: false
+  translation_target:
+    type: select
+    title: Subtitle target language
+    default: zh-CN
+    options:
+      - value: zh-CN
+      - value: en-US
+  hide_home_shorts:
+    type: switch
+    title: Hide Home Shorts
+    description: Removes the Shorts shelf from the Home feed; the Shorts tab and other pages remain.
+    default: false
+  blocked_channels:
+    type: input
+    title: Blocked channels
+    description: Channel IDs, @handles, or full channel names separated by spaces. Prefer IDs; handles are best for names containing spaces.
+    default: ''
+    max-length: 8192
+  blocked_channels_url:
+    type: input
+    title: Remote blocked channels URL
+    description: Public HTTPS plain-text URL. Merged with the manual list; cache refreshes hourly.
+    default: ''
+    max-length: 2048
+  log_enabled:
+    type: switch
+    title: Logging tool
+    description: Enables request/response logging. Turn off to stop sampling; logs may be cleared on a subsequent matching request.
+    default: false
+  quality_research:
+    type: switch
+    title: Quality research sampling
+    description: Only records quality/format parameters when logging is enabled. May buffer the matched video request body while enabled.
+    default: false
+  media_capture_mode:
+    type: select
+    title: Media sampling mode
+    description: Headers records response headers only. Full reads the media response body for development and may add delay.
+    default: headers
+    options:
+      - value: headers
+      - value: full
+  full_media_body_buffer:
+    type: switch
+    title: Allow full media body buffering
+    description: Stash needs this separate safety switch to buffer media bodies. Enable only together with Logging tool and Media sampling mode = full.
+    default: false
+  log_level:
+    type: select
+    title: Log level
+    default: info
+    options:
+      - value: info
+      - value: debug
+      - value: warn
+      - value: error
+  capture_budget:
+    type: select
+    title: Log capacity (MB)
+    description: Recording stops when the limit is reached; existing samples are kept.
+    default: '32'
+    options:
+      - value: '32'
+      - value: '16'
+      - value: '64'
 
 rules:
-  # 强制 API / 播放协商从 QUIC 回退到 TCP,以便 MITM / 脚本可检查。不拒绝媒体正文。
-  - AND,((DOMAIN,youtubei.googleapis.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
-  - AND,((DOMAIN,youtubei-att.googleapis.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
-  # googlevideo 域名及子域的 UDP/443(QUIC)回退到 TCP
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,UDP),(DST-PORT,443)),REJECT
+  # Force YouTube API and media traffic away from UDP/443 so HTTP inspection can use TCP.
+  - 'AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT'
+  - 'AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT'
+  - 'AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT'
+  - 'AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,udp),(DST-PORT,443)),REJECT'
 
 http:
   mitm:
-    - "youtubei.googleapis.com"
-    - "youtubei-att.googleapis.com"
-    - "youtube.com"
-    - "www.youtube.com"
-    - "m.youtube.com"
-    - "music.youtube.com"
-    - "*.googlevideo.com"
+    - youtubei.googleapis.com
+    - youtubei-att.googleapis.com
+    - youtube.com
+    - www.youtube.com
+    - m.youtube.com
+    - music.youtube.com
+    - '*.googlevideo.com'
 
-  url-rewrite:
-    # Loon: initplayback POST(仅 iOS YouTube UA)返回内置空白视频 reject_video(200)
-    # Stash 无 reject-video 且不支持 method/UA 条件,这里近似为 reject-200。
-    # initplayback 本身只有 POST,但请在真机验证播放回退是否正常;若异常请删除此条。
-    - >-
-      ^https:\/\/[a-z0-9-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$ - reject-200
-
+  # Equivalent to Loon's response-header-replace Alt-Svc clear.
   header-rewrite:
-    # 清除媒体源的 Alt-Svc,减少拒绝 QUIC 后的重试(仅响应头)
-    - >-
-      ^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-del Alt-Svc
+    - '^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-del Alt-Svc'
+
+  # Loon's reject_video(200) creates a special blank-video response and only runs for
+  # POST requests from the YouTube iOS app. Stash URL rewrites cannot check HTTP method
+  # or User-Agent and reject-200 returns an empty body, so the broader approximation is
+  # intentionally left disabled. Test before enabling if you specifically need this.
+  # url-rewrite:
+  #   - '^https://[a-z0-9-]+\.googlevideo\.com/initplayback(?:\?[^#]*)?$ - reject-200'
 
   script:
-    # 字幕目标语言
-    - match: ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$
-      name: yt-timedtext
+    # Subtitle translation: rewrite only existing timedtext subtitle requests.
+    - match: '^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$'
+      name: youtube-request
       type: request
       require-body: false
       timeout: 10
-      argument: "[{{{translation_enabled}}},{{{translation_target}}}]"
+      argument: '{"translation_enabled":${args.translation_enabled|json},"translation_target":${args.translation_target|json}}'
 
-    # config / log_event 请求处理
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$
-      name: yt-config-request
+    # Quality sampling must precede the ordinary video request logger. Stash cannot
+    # condition a script on HTTP method, so the script itself checks the method.
+    - match: '^https://[\w-]+\.googlevideo\.com/videoplayback(?:\?[^#]*)?$'
+      name: youtube-request
+      type: request
+      require-body: '${args.quality_research}'
+      binary-mode: true
+      timeout: 10
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"quality_research":${args.quality_research|json}}'
+
+    # Stash log-control page endpoint. Keep log_control=page isolated to this URL;
+    # the bundled script intentionally disables normal sampling in page-control mode.
+    - match: '^http://youtube-logs\.invalid(?::80)?(?:/[^#]*)?$'
+      name: youtube-request
+      type: request
+      require-body: false
+      timeout: 10
+      argument: '{"log_control":"page","log_enabled":false,"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
+
+    # Feed/player request logging and initplayback request inspection.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:browse|next|search|reel/reel_watch_sequence)(?:\?[^#]*)?$|^https://[\w-]+\.googlevideo\.com/initplayback(?:\?[^#]*)?$'
+      name: youtube-request
+      type: request
+      require-body: false
+      timeout: 10
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json},"media_capture_mode":${args.media_capture_mode|json},"quality_research":${args.quality_research|json}}'
+
+    # YouTube log_event may contain binary/protobuf-like payloads.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/log_event(?:\?[^#]*)?$'
+      name: youtube-request
       type: request
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{playback_region}}}]"
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"playback_region":${args.playback_region|json}}'
 
-    # 播放请求与广告配置处理
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|player\/ad_break)(?:\?[^#]*)?$
-      name: yt-player-request
+    # Player negotiation and ad configuration.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch|player/ad_break)(?:\?[^#]*)?$'
+      name: youtube-request
       type: request
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{playback_region}}}]"
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"playback_region":${args.playback_region|json}}'
 
-    # Onesie 配置缓存
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$
-      name: yt-config-response
+    # Feed response: ad cleanup, Shorts shelf and blocked-channel filtering.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/(?:browse|next|search)(?:\?[^#]*)?$'
+      name: youtube-response
       type: response
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}}]"
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"hide_home_shorts":${args.hide_home_shorts|json},"blocked_channels":${args.blocked_channels|json},"blocked_channels_url":${args.blocked_channels_url|json}}'
 
-    # 信息流广告 / 首页 Shorts / 频道屏蔽
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|search)(?:\?[^#]*)?$
-      name: yt-feed-response
+    # Player response: ad handling and optional background playback.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch)(?:\?[^#]*)?$|^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/reel/reel_watch_sequence(?:\?[^#]*)?$'
+      name: youtube-response
       type: response
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{hide_home_shorts}}},{{{blocked_channels}}},{{{blocked_channels_url}}}]"
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json},"quality_research":${args.quality_research|json}}'
 
-    # 播放响应 / 后台播放
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch|reel\/reel_watch_sequence)(?:\?[^#]*)?$
-      name: yt-player-response
+    # Media response logger. Full body buffering is separately gated because Stash's
+    # require-body must be decided before the response arrives.
+    - match: '^https://[\w-]+\.googlevideo\.com/(?:videoplayback|initplayback)(?:\?[^#]*)?$'
+      name: youtube-response
+      type: response
+      require-body: '${args.full_media_body_buffer}'
+      binary-mode: true
+      timeout: 30
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"media_capture_mode":${args.media_capture_mode|json}}'
+
+    # Onesie/config cache logging. Body is required by the source script.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/(?:config|log_event)(?:\?[^#]*)?$'
+      name: youtube-response
       type: response
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: "[{{{log_enabled}}},{{{log_level}}},{{{capture_budget}}},{{{background_playback}}},false]"
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
 
-# 定时刷新屏蔽频道缓存(每小时)
+  # Stash supports the same JavaScript bundle through script-providers.
+  # The request/response scripts auto-detect Stash and parse the JSON argument.
+  # Loon's generic manual button is replaced by this hourly cache refresh.
+
 cron:
   script:
-    - match: "0 * * * *"
-      name: yt-blocked-channels-cron
+    - name: youtube-request
+      cron: '0 * * * *'
       timeout: 10
-      argument: "[{{{blocked_channels_url}}}]"
+      argument: '{"blocked_channels_url":${args.blocked_channels_url|json}}'
 
 script-providers:
-  yt-timedtext:
+  youtube-request:
     url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
     interval: 86400
-  yt-config-request:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
-    interval: 86400
-  yt-player-request:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
-    interval: 86400
-  yt-blocked-channels-cron:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
-    interval: 86400
-  yt-config-response:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
-    interval: 86400
-  yt-feed-response:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
-    interval: 86400
-  yt-player-response:
+  youtube-response:
     url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
     interval: 86400
