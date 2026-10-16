@@ -1,12 +1,17 @@
-name: YouTube (Stash preroll fix)
-desc: Preroll-ad metadata filtering for Stash. Does not reject normal Googlevideo media URLs. Requires trusted MITM certificate.
+name: YouTube (Stash stable playback fix)
+desc: Restores upstream player-response ad handling and explicitly blocks Googlevideo QUIC to improve PiP stability. Requires trusted MITM certificate.
 author: devchristian1337 (Stash override conversion)
 homepage: https://github.com/devchristian1337/loon-plugins/blob/main/README.md
 icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
 category: YouTube
-version: 1.2.0
+version: 1.3.0
 arguments-version: 1
 arguments:
+  background_playback:
+    type: switch
+    title: Background playback
+    description: Optional background audio playback. Keep OFF while troubleshooting PiP; this can change YouTube player responses.
+    default: false
   playback_region:
     type: select
     title: Playback request region
@@ -78,9 +83,11 @@ arguments:
       - value: '64'
 
 rules:
-  # Force YouTube API traffic away from UDP/443 so MITM can inspect player JSON responses.
+  # Force YouTube API and Googlevideo media away from QUIC/UDP 443 so proxied playback falls back to TCP.
   - 'AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT'
   - 'AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT'
+  - 'AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT'
+  - 'AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,udp),(DST-PORT,443)),REJECT'
 
 http:
   mitm:
@@ -90,17 +97,20 @@ http:
     - www.youtube.com
     - m.youtube.com
     - music.youtube.com
+    - '*.googlevideo.com'
 
   # Direct ad/tracking URL filters. Do not reject initplayback or videoplayback wholesale;
-  # this build intentionally does not block Googlevideo media requests.
+  # doing so can interrupt real media playback and PiP.
   url-rewrite:
     - '^https?:\/\/(?:www|s)\.youtube\.com\/api\/stats\/ads(?:[/?#].*)?$ - reject-200'
     - '^https?:\/\/(?:www|s)\.youtube\.com\/(?:pagead|ptracking)(?:[/?#].*)?$ - reject-200'
     - '^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?[^#]*adcontext[^#]*$ - reject-200'
 
-  # Remove ad scheduling metadata in player JSON responses. Never reject Googlevideo media streams.
-  body-rewrite:
-    - '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch)(?:\?[^#]*)?$ response-jq walk(if type == "object" then del(.adPlacements, .adSlots, .playerAds, .adBreakHeartbeatParams) else . end)'
+  # Equivalent to Loon's response-header-replace Alt-Svc clear.
+  header-rewrite:
+    - '^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-del Alt-Svc'
+
+  # Do not emulate Loon reject_video(200): Stash reject-200 returns an empty body.
 
   script:
     # Subtitle translation: rewrite only existing timedtext subtitle requests.
@@ -126,7 +136,7 @@ http:
       type: request
       require-body: false
       timeout: 10
-      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json}}'
 
     # YouTube log_event may contain binary/protobuf-like payloads.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/log_event(?:\?[^#]*)?$'
@@ -137,6 +147,14 @@ http:
       timeout: 10
       argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"playback_region":${args.playback_region|json}}'
 
+    # Player negotiation and ad configuration.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch|player/ad_break)(?:\?[^#]*)?$'
+      name: youtube-request
+      type: request
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"playback_region":${args.playback_region|json}}'
 
     # Feed response: ad cleanup, Shorts shelf and blocked-channel filtering.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/(?:browse|next|search)(?:\?[^#]*)?$'
@@ -147,6 +165,14 @@ http:
       timeout: 10
       argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"hide_home_shorts":${args.hide_home_shorts|json},"blocked_channels":${args.blocked_channels|json},"blocked_channels_url":${args.blocked_channels_url|json}}'
 
+    # Player response: restore the upstream YouTubePlayback handler; the 1.2.0 file omitted it, which left preroll ad metadata untouched.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch)(?:\?[^#]*)?$|^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/reel/reel_watch_sequence(?:\?[^#]*)?$'
+      name: youtube-response
+      type: response
+      require-body: true
+      binary-mode: true
+      timeout: 10
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json}}'
 
     # Onesie/config cache logging. Body is required by the source script.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/(?:config|log_event)(?:\?[^#]*)?$'
@@ -157,7 +183,7 @@ http:
       timeout: 10
       argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
 
-  # Player ad metadata is filtered by body-rewrite; media segment requests/responses are not intercepted.
+  # Reuses the platform-aware JS bundles. No script reads/buffers Googlevideo media-segment bodies.
   # The Loon manual button is replaced by this hourly cache refresh.
 
 cron:
