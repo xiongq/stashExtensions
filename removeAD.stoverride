@@ -1,23 +1,26 @@
-name: YouTube Enhance (官方最新单脚本架构)
-desc: 去广告、全视频画中画与后台播放、隐藏底栏与首页 Shorts
-icon: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.png
+name: YouTube (画中画终极修复版)
+desc: 修复 Stash 下 max-size 导致二进制脚本失效及 initplayback 请求阶段拦截问题
+icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
 
 rules:
-  # 拦截 QUIC (UDP 443)，强制回退 HTTPS
+  # 强制阻断 UDP 443 (QUIC)，确保 100% 走 HTTPS 触发脚本
   - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
   - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
   - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
+  - AND,((DOMAIN-SUFFIX,youtube.com),(PROTOCOL,UDP)),REJECT
 
 http:
   mitm:
     - "*.googlevideo.com"
     - "youtubei.googleapis.com"
     - "youtubei-att.googleapis.com"
+    - "youtube.com"
     - "www.youtube.com"
+    - "m.youtube.com"
     - "s.youtube.com"
 
   url-rewrite:
-    # 仅拦截带 &oad 标记的广告初始化流及广告统计，不阻断正常视频加载
+    # 拦截广告请求与 initplayback 预加载
     - ^https?:\/\/[\w-]+\.googlevideo\.com\/(?!dclk_video_ads|videoplayback\?).+&oad - reject-200
     - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
     - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
@@ -27,24 +30,22 @@ http:
     - ^https?:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
 
   script:
-    # 1. 核心：处理主接口（包含 log_event 与 config 以清除加密预加载，包含 guide 以隐藏底栏 Shorts）
+    # 1. 关键修复：initplayback 必须是 type: request（请求阶段拦截），逼迫客户端走 /player 接口解锁画中画
+    - match: ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*
+      name: YouTube_Enhance_Response
+      type: request
+      require-body: true
+      binary-mode: true
+      timeout: 15
+      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
+
+    # 2. 核心修复：移除导致脚本跳过的 max-size: -1，完整修改 player 与 setting 响应包，解锁画中画
     - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config)(\?(.*))?$
       name: YouTube_Enhance_Response
       type: response
       require-body: true
       binary-mode: true
-      max-size: -1
-      timeout: 15
-      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
-
-    # 2. 关键新增：接管 googlevideo 的 initplayback 响应，解决部分视频画中画灰屏与漏广告
-    - match: ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*
-      name: YouTube_Enhance_Response
-      type: response
-      require-body: true
-      binary-mode: true
-      max-size: -1
-      timeout: 15
+      timeout: 20
       argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
 
 script-providers:
