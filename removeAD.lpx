@@ -1,0 +1,31 @@
+#!name = Youtube
+#!desc = 移除广告、画中画支持、隐藏底部与首页 Shorts
+#!icon = https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
+#!author = Maasea
+#!tag = YouTube, 去广告, 画中画
+
+[Argument]
+blockShorts = switch, true, tag = 隐藏 Shorts, desc = 隐藏底部导航栏 Shorts 标签页及首页 Shorts 推荐流
+blockUpload = switch, true, tag = 隐藏上传按钮, desc = 隐藏底部导航栏正中间的“+”创建/上传按钮
+blockImmersive = switch, true, tag = 隐藏选段按钮, desc = 屏蔽音乐与视频中的沉浸式选段按钮
+captionLang = select, "off", "zh-Hans", "zh-Hant", "en", "ja", "ko", tag = 字幕翻译语言, desc = 选择字幕自动翻译的目标语言，选 off 则关闭自动翻译保持原版字幕
+lyricLang = select, "off", "zh-Hans", "zh-Hant", "en", tag = 歌词翻译语言, desc = YouTube Music 歌词自动翻译目标语言，选 off 关闭
+debug = switch, false, tag = 调试模式, desc = 开启后输出更多调试日志
+
+[Rule]
+AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
+AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
+
+[Script]
+# 1. 响应脚本：去广告、画中画解锁、隐藏 Shorts 与上传按钮
+http-response ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/(youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config))(\?(.*))?$ script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js, requires-body=true, binary-body-mode=true, max-size=-1, argument=[{lyricLang},{captionLang},{blockUpload},{blockImmersive},{blockShorts},{debug}], tag=youtube.response
+
+# 2. 请求脚本：处理带 &ack 的 initplayback 请求
+http-request ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.* script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js, requires-body=true, binary-body-mode=true, max-size=-1, argument=[{captionLang}], tag=youtube.request.init
+
+# 3. 请求脚本：处理 log_event 请求
+http-request ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/log_event script-path=https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js, requires-body=true, binary-body-mode=true, max-size=-1, tag=youtube.request.log
+
+[Mitm]
+hostname = *.googlevideo.com, youtubei.googleapis.com, youtubei-att.googleapis.com
