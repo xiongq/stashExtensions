@@ -2,5 +2,8 @@
 
 ## YouTube AD
 ### 列表
-- [Stash](stash://install-override?url=encode([url](https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.stoverride)))
-- [Loon](loon://import?plugin=encode([url](https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx)))
+- [Stash install](stash://install-override?url=encode(https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.stoverride))
+- [Loon install](loon://import?plugin=encode(https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx))
+
+- [Stash Link](https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.stoverride)
+- [Loon Link](loon://import?plugin=encode(https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx))
