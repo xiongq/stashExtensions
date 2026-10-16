@@ -6,4 +6,4 @@
 - [Loon install](loon://import?plugin=encode(https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx))
 
 - [Stash Link](https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.stoverride)
-- [Loon Link](loon://import?plugin=encode(https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx))
+- [Loon Link](https://raw.githubusercontent.com/xiongq/stashExtensions/refs/heads/main/removeAD.lpx)
