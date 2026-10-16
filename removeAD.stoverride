@@ -1,53 +1,56 @@
-name: YouTube Stash (Maasea response diagnostic)
-desc: Focused YouTube preroll-ad diagnosis using the Maasea response script. Does not reject initplayback or videoplayback requests. Requires trusted MITM certificate.
-author: Stash override conversion
-homepage: https://github.com/Maasea/sgmodule
-icon: https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/YouTube.png
-category: YouTube
-version: 1.4.0
-arguments-version: 1
-arguments:
-  debug_enabled:
-    type: switch
-    title: Script debug logs
-    description: Enable script-side debugging while checking whether player responses are processed.
-    default: true
+name: |-
+  Youtube
+desc: |-
+  移除广告、画中画支持
+icon: |-
+  https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
+arguments-desc: |-
+  - 屏蔽参数：[true, false] \n- 翻译参数：[语言代码, off] \n\n1. 语言代码遵循 Google Translate Languages Codes, 当填入 off 时关闭翻译\n2. 开启调试模式用于输出更多日志
 
 rules:
-  # Stash's documented QUIC fallback approach: reject UDP/443 for YouTube APIs/media;
-  # the connection should retry over TCP. The REJECT log itself is expected for these matches.
-  - 'AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,udp),(DST-PORT,443)),REJECT'
-  - 'AND,((DOMAIN,youtubei.googleapis.com),(NETWORK,udp),(DST-PORT,443)),REJECT'
-  - 'AND,((DOMAIN,youtubei-att.googleapis.com),(NETWORK,udp),(DST-PORT,443)),REJECT'
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+  - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
+  - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
 
 http:
   mitm:
-    - youtubei.googleapis.com
-    - youtubei-att.googleapis.com
-    - www.youtube.com
-    - s.youtube.com
-    - m.youtube.com
-    - music.youtube.com
-    - '-redirector*.googlevideo.com'
-    - '*.googlevideo.com'
-
-  # Block telemetry only. Do not intercept initplayback/videoplayback media bodies.
-  url-rewrite:
-    - '^https?:\/\/(?:www|s)\.youtube\.com\/api\/stats\/ads(?:[/?#].*)?$ - reject-200'
-    - '^https?:\/\/(?:www|s)\.youtube\.com\/(?:pagead|ptracking)(?:[/?#].*)?$ - reject-200'
-    - '^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext[^#]*$ - reject-200'
+    - "*.googlevideo.com"
+    - "youtubei.googleapis.com"
+    - "youtubei-att.googleapis.com"
 
   script:
-    # Keep the match focused on YouTube JSON API responses that can carry ad placement metadata.
-    - name: youtube-response
-      match: '^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(?:\?[^#]*)?$'
+    # 1. 响应脚本：严格保持原版结构，仅开启 blockShorts: true
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/(youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch|log_event|config))(\?(.*))?$
+      name: "youtube.response_5"
       type: response
       require-body: true
+      max-size: -1
       binary-mode: true
-      timeout: 60
-      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":false,"debug":${args.debug_enabled|json}}'
+      argument: |-
+        {"captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}
 
-  script-providers:
-    youtube-response:
-      url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
-      interval: 86400
+    # 2. 请求脚本：恢复 .+&ack.* 后缀！绝不拦截正常画中画视频流，彻底解决小窗灰屏！
+    - match: ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback.+&ack.*
+      name: "youtube.request.init_6"
+      type: request
+      require-body: true
+      max-size: -1
+      binary-mode: true
+      argument: |-
+        {"captionLang":"off"}
+
+    # 3. 请求脚本：恢复原版只匹配 log_event，不破坏 player 请求！
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/log_event
+      name: "youtube.request.init_6"
+      type: request
+      require-body: true
+      max-size: -1
+      binary-mode: true
+
+script-providers:
+  "youtube.response_5":
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.response.js
+    interval: 86400
+  "youtube.request.init_6":
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.request.js
+    interval: 86400
