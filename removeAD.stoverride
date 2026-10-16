@@ -1,13 +1,16 @@
-name: YouTube2
-desc: YouTube request/response scripts migrated from the Loon plugin. Requires trusted MitM certificate.
+name: YouTube (Stash compatibility fix)
+desc: Stash-compatible YouTube ad filtering. Avoids media-segment script interception to improve playback/PiP stability. Requires trusted MITM certificate.
+author: devchristian1337 (Stash override conversion)
+homepage: https://github.com/devchristian1337/loon-plugins/blob/main/README.md
 icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
-
+category: YouTube
+version: 1.1.0
 arguments-version: 1
 arguments:
   background_playback:
     type: switch
     title: Background playback
-    description: Requests background playback for regular videos. Live streams/restricted content remain controlled by YouTube.
+    description: Optional background audio playback. Keep OFF while troubleshooting PiP; this can change YouTube player responses.
     default: false
   playback_region:
     type: select
@@ -58,25 +61,7 @@ arguments:
   log_enabled:
     type: switch
     title: Logging tool
-    description: Enables request/response logging. Turn off to stop sampling; logs may be cleared on a subsequent matching request.
-    default: false
-  quality_research:
-    type: switch
-    title: Quality research sampling
-    description: Only records quality/format parameters when logging is enabled. May buffer the matched video request body while enabled.
-    default: false
-  media_capture_mode:
-    type: select
-    title: Media sampling mode
-    description: Headers records response headers only. Full reads the media response body for development and may add delay.
-    default: headers
-    options:
-      - value: headers
-      - value: full
-  full_media_body_buffer:
-    type: switch
-    title: Allow full media body buffering
-    description: Stash needs this separate safety switch to buffer media bodies. Enable only together with Logging tool and Media sampling mode = full.
+    description: Enables API request/response logging. Media video-segment bodies are not intercepted in this stability-focused build.
     default: false
   log_level:
     type: select
@@ -114,16 +99,25 @@ http:
     - music.youtube.com
     - '*.googlevideo.com'
 
+  # Direct ad/tracking URL filters. Do not reject initplayback or videoplayback wholesale;
+  # doing so can interrupt real media playback and PiP.
+  url-rewrite:
+    - '^https?:\/\/(?:www|s)\.youtube\.com\/api\/stats\/ads(?:[/?#].*)?$ - reject-200'
+    - '^https?:\/\/(?:www|s)\.youtube\.com\/(?:pagead|ptracking)(?:[/?#].*)?$ - reject-200'
+    - '^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?[^#]*adcontext[^#]*$ - reject-200'
+    # Remove the ad-tier hint without rejecting the video stream itself.
+    - '^https:\/\/([\w-]+\.googlevideo\.com\/[^?#]+)\?ctier=L&([^#]+)$ https://$1?$2 302'
+    - '^https:\/\/([\w-]+\.googlevideo\.com\/[^?#]+\?[^#]*?)&ctier=L(&[^#]*)?$ https://$1$2 302'
+    - '^https:\/\/([\w-]+\.googlevideo\.com\/[^?#]+)\?ctier=L$ https://$1 302'
+    # Keep away from dclk_video_ads, videoplayback and initplayback; only block other ad-tagged URLs.
+    - '^https?:\/\/[\w-]+\.googlevideo\.com\/(?!(?:dclk_video_ads|videoplayback(?:\?|$)|initplayback(?:\?|$))).*[?&]oad(?:=[^&]*)?(?:&[^#]*)?$ - reject-200'
+
   # Equivalent to Loon's response-header-replace Alt-Svc clear.
   header-rewrite:
     - '^https://(?:[\w-]+\.)*googlevideo\.com(?::443)?/ response-del Alt-Svc'
 
-  # Loon's reject_video(200) creates a special blank-video response and only runs for
-  # POST requests from the YouTube iOS app. Stash URL rewrites cannot check HTTP method
-  # or User-Agent and reject-200 returns an empty body, so the broader approximation is
-  # intentionally left disabled. Test before enabling if you specifically need this.
-  # url-rewrite:
-  #   - '^https://[a-z0-9-]+\.googlevideo\.com/initplayback(?:\?[^#]*)?$ - reject-200'
+  # Deliberately do not emulate Loon reject_video(200): Stash reject-200 returns an empty body
+  # and is not equivalent to Loon's special blank-video response.
 
   script:
     # Subtitle translation: rewrite only existing timedtext subtitle requests.
@@ -134,16 +128,6 @@ http:
       timeout: 10
       argument: '{"translation_enabled":${args.translation_enabled|json},"translation_target":${args.translation_target|json}}'
 
-    # Quality sampling must precede the ordinary video request logger. Stash cannot
-    # condition a script on HTTP method, so the script itself checks the method.
-    - match: '^https://[\w-]+\.googlevideo\.com/videoplayback(?:\?[^#]*)?$'
-      name: youtube-request
-      type: request
-      require-body: '${args.quality_research}'
-      binary-mode: true
-      timeout: 10
-      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"quality_research":${args.quality_research|json}}'
-
     # Stash log-control page endpoint. Keep log_control=page isolated to this URL;
     # the bundled script intentionally disables normal sampling in page-control mode.
     - match: '^http://youtube-logs\.invalid(?::80)?(?:/[^#]*)?$'
@@ -153,13 +137,13 @@ http:
       timeout: 10
       argument: '{"log_control":"page","log_enabled":false,"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
 
-    # Feed/player request logging and initplayback request inspection.
-    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:browse|next|search|reel/reel_watch_sequence)(?:\?[^#]*)?$|^https://[\w-]+\.googlevideo\.com/initplayback(?:\?[^#]*)?$'
+    # Feed request logging only; do not intercept frequent video-segment requests.
+    - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:browse|next|search|reel/reel_watch_sequence)(?:\?[^#]*)?$'
       name: youtube-request
       type: request
       require-body: false
       timeout: 10
-      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json},"media_capture_mode":${args.media_capture_mode|json},"quality_research":${args.quality_research|json}}'
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json}}'
 
     # YouTube log_event may contain binary/protobuf-like payloads.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/log_event(?:\?[^#]*)?$'
@@ -188,24 +172,14 @@ http:
       timeout: 10
       argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"hide_home_shorts":${args.hide_home_shorts|json},"blocked_channels":${args.blocked_channels|json},"blocked_channels_url":${args.blocked_channels_url|json}}'
 
-    # Player response: ad handling and optional background playback.
+    # Player response: ad handling. Leave background_playback OFF to isolate PiP stability.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)/youtubei/v1/(?:player|get_watch)(?:\?[^#]*)?$|^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/reel/reel_watch_sequence(?:\?[^#]*)?$'
       name: youtube-response
       type: response
       require-body: true
       binary-mode: true
       timeout: 10
-      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json},"quality_research":${args.quality_research|json}}'
-
-    # Media response logger. Full body buffering is separately gated because Stash's
-    # require-body must be decided before the response arrives.
-    - match: '^https://[\w-]+\.googlevideo\.com/(?:videoplayback|initplayback)(?:\?[^#]*)?$'
-      name: youtube-response
-      type: response
-      require-body: '${args.full_media_body_buffer}'
-      binary-mode: true
-      timeout: 30
-      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"media_capture_mode":${args.media_capture_mode|json}}'
+      argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json},"background_playback":${args.background_playback|json}}'
 
     # Onesie/config cache logging. Body is required by the source script.
     - match: '^https://(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)/youtubei/v1/(?:config|log_event)(?:\?[^#]*)?$'
@@ -216,9 +190,8 @@ http:
       timeout: 10
       argument: '{"log_enabled":${args.log_enabled|json},"log_level":${args.log_level|json},"capture_budget":${args.capture_budget|json}}'
 
-  # Stash supports the same JavaScript bundle through script-providers.
-  # The request/response scripts auto-detect Stash and parse the JSON argument.
-  # Loon's generic manual button is replaced by this hourly cache refresh.
+  # Reuses the platform-aware JavaScript bundles. To avoid playback stalls, this build does not attach scripts to googlevideo media segments.
+  # The Loon manual button is replaced by this hourly cache refresh.
 
 cron:
   script:
