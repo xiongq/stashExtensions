@@ -1,118 +1,58 @@
-name: YouTube v1.3
-desc: 彻底阻断 initplayback 加密流绕过，解决部分视频画中画灰屏与漏广告问题
-icon: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/App-Icons/youtube.png
+name: YouTube Stash 专享完整版
+desc: 完整包含 Request 与 Response 双引擎脚本，解决 Stash 下画中画灰屏与漏广告问题
+icon: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/youtube.png
 
 rules:
-  # 1. 彻底阻断 QUIC / UDP 443，严防流量绕过 MITM
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(NETWORK,UDP)),REJECT
-  - AND,((DOMAIN-SUFFIX,youtube.com),(NETWORK,UDP)),REJECT
-  - AND,((DOMAIN,youtubei.googleapis.com),(NETWORK,UDP)),REJECT
-  - AND,((DOMAIN,youtubei-att.googleapis.com),(NETWORK,UDP)),REJECT
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,QUIC)),REJECT
-  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
-  - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
-  - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP),(DST-PORT,443)),REJECT
-
-  # 2. 补充拦截首页图文广告与统计域名
-  - DOMAIN,ads.youtube.com,REJECT
-  - DOMAIN,ad.youtube.com,REJECT
-  - DOMAIN-KEYWORD,pagead,REJECT
+  # 拦截 QUIC，强制走 HTTPS
+  - AND,((DOMAIN-SUFFIX,googlevideo.com),(PROTOCOL,UDP)),REJECT
+  - AND,((DOMAIN,youtubei.googleapis.com),(PROTOCOL,UDP)),REJECT
+  - AND,((DOMAIN,youtubei-att.googleapis.com),(PROTOCOL,UDP)),REJECT
 
 http:
   mitm:
+    - "*.googlevideo.com"
     - "youtubei.googleapis.com"
     - "youtubei-att.googleapis.com"
-    - "youtube.com"
     - "www.youtube.com"
-    - "m.youtube.com"
-    - "music.youtube.com"
     - "s.youtube.com"
-    - "*.googlevideo.com"
 
   url-rewrite:
-    # 彻底阻断 initplayback (Onesie 加密预加载)，强制所有视频回退到 /youtubei/v1/player 接口！
-    - ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback - reject-200
-    # 拦截附加广告请求与统计
-    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject-200
-    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject-200
-    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject-200
+    # 关键：在 Stash 中必须使用 reject（直接断开连接）而非 reject-200（返回空内容）
+    # 只有直接断开连接，YouTube 才会认为 CDN 节点故障并立刻回退到标准 /player 接口！
+    - ^https?:\/\/[\w-]+\.googlevideo\.com\/initplayback - reject
+    - ^https?:\/\/(www|s)\.youtube\.com\/api\/stats\/ads - reject
+    - ^https?:\/\/(www|s)\.youtube\.com\/(pagead|ptracking) - reject
+    - ^https?:\/\/s\.youtube\.com\/api\/stats\/qoe\?adcontext - reject
 
   header-rewrite:
-    # 移除 Alt-Svc 响应头，防止客户端获知 HTTP/3 通道
     - ^https?:\/\/(?:[\w-]+\.)*googlevideo\.com(?::443)?\/ response-del Alt-Svc
-    - ^https?:\/\/youtubei(?:-att)?\.googleapis\.com(?::443)?\/ response-del Alt-Svc
 
   script:
-    # 0. 双重保险：对漏网的 initplayback 请求执行脚本拦截
-    - match: ^https:\/\/[\w-]+\.googlevideo\.com\/initplayback(?:\?[^#]*)?$
-      name: YouTube_Request
-      type: request
-      require-body: false
-      timeout: 10
-      argument: '[true,"info","32",true,"headers",false]'
-
-    # 1. 字幕翻译请求
-    - match: ^https:\/\/(?:www\.|m\.)?youtube\.com\/api\/timedtext\?[^#]+$
-      name: YouTube_Request
-      type: request
-      require-body: false
-      timeout: 10
-      argument: '[true,"zh-CN"]'
-
-    # 2. 客户端配置请求 (playback_region 设回 original，避免触发美区音乐视频画中画锁死)
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/log_event(?:\?[^#]*)?$
-      name: YouTube_Request
+    # 1. 核心：之前缺失的 Request 脚本（修改客户端请求头与 Protobuf 请求体，彻底解决部分视频画中画灰屏）
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|reel\/reel_watch_sequence)(\?(.*))?$
+      name: YouTube_Enhance_Request
       type: request
       require-body: true
       binary-mode: true
       max-size: -1
-      timeout: 10
-      argument: '[false,"info","32","original"]'
+      timeout: 15
+      argument: '{"debug":false}'
 
-    # 3. 播放请求与广告中断过滤
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(?:player|get_watch)(?:\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/player\/ad_break(?:\?[^#]*)?$
-      name: YouTube_Request
-      type: request
-      require-body: true
-      binary-mode: true
-      max-size: -1
-      timeout: 10
-      argument: '[false,"info","32","original"]'
-
-    # 4. Onesie 配置缓存清理（极为关键：清除下发的加密配置，防止客户端启用 initplayback）
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.)?youtube\.com)\/youtubei\/v1\/(?:config|log_event)(?:\?[^#]*)?$
-      name: YouTube_Response
+    # 2. 核心：Response 脚本（去首页广告、去贴片广告、开启后台与画中画、隐藏首页与底栏 Shorts）
+    - match: ^https:\/\/youtubei(?:-att)?\.googleapis\.com\/youtubei\/v1\/(browse|next|player|search|reel\/reel_watch_sequence|guide|account\/get_setting|get_watch)(\?(.*))?$
+      name: YouTube_Enhance_Response
       type: response
       require-body: true
       binary-mode: true
       max-size: -1
       timeout: 15
-      argument: '[false,"info","32"]'
-
-    # 5. 首页信息流广告、搜索结果与 Home Shorts 屏蔽
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(browse|next|search)(\?[^#]*)?$
-      name: YouTube_Response
-      type: response
-      require-body: true
-      binary-mode: true
-      max-size: -1
-      timeout: 15
-      argument: '[false,"info","32",true,"",""]'
-
-    # 6. 播放器响应处理与后台播放/画中画全量解锁
-    - match: ^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/(player|get_watch)(\?[^#]*)?$|^https:\/\/(?:youtubei(?:-att)?\.googleapis\.com|(?:www\.|m\.|music\.)?youtube\.com)\/youtubei\/v1\/reel\/reel_watch_sequence(?:\?[^#]*)?$
-      name: YouTube_Response
-      type: response
-      require-body: true
-      binary-mode: true
-      max-size: -1
-      timeout: 15
-      argument: '[false,"info","32",true,false]'
+      # captionLang 设为 off，避免接管字幕导致字幕加载失败，使用 YouTube 原生字幕
+      argument: '{"lyricLang":"off","captionLang":"off","blockUpload":true,"blockImmersive":true,"blockShorts":true,"debug":false}'
 
 script-providers:
-  YouTube_Request:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/request.min.js
+  YouTube_Enhance_Request:
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.request.preview.js
     interval: 86400
-  YouTube_Response:
-    url: https://raw.githubusercontent.com/devchristian1337/loon-plugins/refs/heads/main/Scripts/YouTube/response.min.js
+  YouTube_Enhance_Response:
+    url: https://raw.githubusercontent.com/Maasea/sgmodule/master/Script/Youtube/dist/youtube.response.preview.js
     interval: 86400
